@@ -1,0 +1,222 @@
+\documentclass[11pt,letterpaper]{article}
+
+% --- Essential Packages ---
+\usepackage[utf8]{inputenc}
+\usepackage[margin=1in]{geometry}
+\usepackage{amsmath,amssymb,amsfonts}
+\usepackage{graphicx}
+\usepackage{booktabs}
+\usepackage{xcolor}
+\usepackage{hyperref}
+\usepackage{enumitem}
+\usepackage{caption}
+\usepackage{float}
+\usepackage{microtype}
+\usepackage{setspace}
+
+% --- Typography & Styling ---
+\setstretch{1.15}
+\definecolor{navyblue}{RGB}{31, 78, 121}
+\definecolor{steelblue}{RGB}{46, 117, 182}
+\definecolor{charcoal}{RGB}{40, 40, 40}
+
+\hypersetup{
+    colorlinks=true,
+    linkcolor=navyblue,
+    citecolor=navyblue,
+    urlcolor=steelblue
+}
+
+\captionsetup{
+    font={small,it},
+    labelfont={bf,color=navyblue},
+    skip=6pt
+}
+
+% Section title styling
+\usepackage{titlesec}
+\titleformat{\section}
+  {\normalfont\Large\bfseries\color{navyblue}}{\thesection}{1em}{}
+\titleformat{\subsection}
+  {\normalfont\large\bfseries\color{steelblue}}{\thesubsection}{1em}{}
+
+% --- Document Metadata ---
+\title{\vspace{-1.5cm}\textbf{\Large Applicability of Machine Learning in Financial Market Forecasting} \\
+\large A Rigorous Empirical Comparison Between Regularized Autoregressive Modeling and a Custom LSTM Built from Scratch}
+\author{\textbf{Machine Learning Term Project} \\
+\textit{Target Asset}: SPDR S\&P 500 ETF Trust (Ticker: SPY) \\
+\textit{Objective}: Next-Day Closing Price Prediction ($P_{t+1}$)}
+\date{\today}
+
+\begin{document}
+
+\maketitle
+\thispagestyle{empty}
+\vspace{-0.5cm}
+\hrule
+\vspace{0.6cm}
+
+% =========================================================================
+% SECTION I: INTRODUCTION AND MOTIVATION (~1 PAGE)
+% =========================================================================
+\section{Introduction and Motivation}
+
+The financial markets represent one of the most intricate, high-dimensional, and noisy dynamical systems in modern applied science. For decades, neoclassical financial economics has been anchored in the \textbf{Efficient Market Hypothesis (EMH)} formulated by Eugene Fama. In its weak form, the EMH asserts that asset prices fully reflect all historical price information. Under this paradigm, equity prices follow a near-martingale or random walk process:
+\begin{equation}
+    \mathbb{E}[P_{t+1} \mid \mathcal{F}_t] = P_t + \mu_t,
+\end{equation}
+where $\mathcal{F}_t$ represents the filtration of historical information up to time $t$, and $\mu_t$ represents an unpredictable stochastic drift component. Consequently, traditional statistical and linear econometric tools frequently fail to generate statistically significant economic alpha, as non-linear interactions, regime shifts, and sudden volatility bursts render simple stationary assumptions inadequate.
+
+With the rapid emergence of modern machine learning (ML), a fundamental question has arisen for quantitative researchers: \textit{Are machine learning architectures genuinely applicable to financial market forecasting, or are observed empirical gains merely statistical artifacts of overfitting to non-stationary market regimes?} Financial time-series data presents severe structural challenges that distinguish it fundamentally from standard machine learning domains (such as computer vision or natural language processing):
+\begin{enumerate}[leftmargin=*,itemsep=2pt,topsep=2pt]
+    \item \textbf{Extremely Low Signal-to-Noise Ratio (SNR)}: Deterministic patterns are heavily dwarfed by macroeconomic shocks, geopolitical events, and high-frequency behavioral noise.
+    \item \textbf{Structural Non-Stationarity}: The underlying data-generating process evolves over time; financial distributions exhibit heavy tails, volatility clustering, and regime switches across macroeconomic cycles.
+    \item \textbf{Temporal Autocorrelation and Lookahead Leakage}: Standard cross-validation techniques (such as $k$-fold shuffling) destroy temporal order and inject future information into training splits, creating an illusion of high predictive power that fails catastrophically out of sample.
+\end{enumerate}
+
+The core motivation of this investigation is to evaluate whether machine learning can reliably extract predictive structure from equity markets by focusing on the world's most liquid benchmark equity index instrument: the \textbf{SPDR S\&P 500 ETF Trust (SPY)}. Rather than deploying multi-ticker black-box libraries, this study deliberately isolates the forecasting mechanics by contrasting a classic, interpretable machine learning baseline---\textbf{Regularized Linear Autoregression (Ridge AR)}---against an advanced non-linear deep learning architecture---\textbf{a Long Short-Term Memory (LSTM) Recurrent Neural Network built completely from scratch in pure NumPy}. By implementing the mathematical equations from first principles without relying on high-level deep learning wrappers (such as Keras, TensorFlow, or PyTorch), this research provides unconstrained visibility into gate activations, analytical Backpropagation Through Time (BPTT), coefficient weights, and true out-of-sample predictive validity.
+
+\newpage
+
+% =========================================================================
+% SECTION II: ML METHODOLOGY AND DATA COLLECTION (~1 PAGE)
+% =========================================================================
+\section{ML Methodology and Data Collection}
+
+\subsection{Data Selection, Ingestion, and Curation}
+The empirical data was ingested programmatically from Yahoo Finance via the \texttt{yfinance} API, targeting daily historical bars for \textbf{SPY} from \textbf{January 1, 2018 through January 1, 2024}. This six-year window spans 1,509 active trading sessions, purposefully chosen to expose candidate models to diverse macroeconomic regimes: the 2018 trade war volatility, the 2019 expansion, the historic COVID-19 liquidity shock and V-shaped rebound of 2020, the aggressive Federal Reserve rate-hiking cycle and bear market of 2022, and the 2023 tech-driven recovery. Curating the dataset across these divergent regimes ensures that models are evaluated on structural resilience rather than single-regime bull-market momentum.
+
+To replicate realistic trading constraints without lookahead bias, the feature space was structured into chronological sliding windows of $T = 60$ trading days (approximately three calendar months). Each input feature vector $\mathbf{x}_t = [P_{t-59}, P_{t-58}, \dots, P_t] \in \mathbb{R}^{60}$ is tasked with forecasting the single-step forward closing price $y_t = P_{t+1}$. The dataset was partitioned chronologically using an \textbf{80/20 train-test split}: the first 80\% (1,159 sequences from 2018 to early 2022) served as the training history, while the final 20\% (290 trading days from 2022 through late 2023) was preserved strictly for out-of-sample testing. Feature scaling for the neural network was performed using a custom \texttt{MinMaxScalerScratch} in NumPy, fitting bounds strictly on the training partition ($P_{\min} = \$235.53$, $P_{\max} = \$472.23$) to avoid data snooping.
+
+\subsection{Overview of the Two Machine Learning Methods}
+To establish a rigorous benchmark across model capacity and inductive bias, two distinct machine learning paradigms were implemented:
+
+\paragraph{Method 1 (Course Content Baseline: Ridge AR(60)):}
+Representing classical linear machine learning course content, this model expresses the future closing price as a regularized linear combination of the preceding 60 daily prices:
+\begin{equation}
+    y_t = \beta_0 + \sum_{k=1}^{60} \beta_k P_{t-k+1} + \epsilon_t.
+\end{equation}
+Because consecutive daily prices exhibit extreme multicollinearity, Ordinary Least Squares (OLS) produces erratic, high-variance weight vectors. To enforce stability, an L2 Tikhonov regularization penalty ($\alpha = 1.0$) was introduced. The exact closed-form parameter vector was computed using pure NumPy matrix decomposition:
+\begin{equation}
+    \boldsymbol{\beta} = (\mathbf{X}^T \mathbf{X} + \alpha \mathbf{I}^*)^{-1} \mathbf{X}^T \mathbf{y},
+\end{equation}
+where $\mathbf{I}^*$ leaves the intercept bias $\beta_0$ unpenalized.
+
+\paragraph{Method 2 (Outside Course Content Adjustment: Custom LSTM from Scratch):}
+Developed as an extensive mathematical extension outside standard course boundaries, Method 2 rejects high-level frameworks (no Keras/TensorFlow/PyTorch) and implements a complete Long Short-Term Memory network purely in NumPy. An input dimension of $D_{\text{in}} = 1$, hidden dimension $H = 32$, and linear output projection $D_{\text{out}} = 1$ were utilized. At each time step $t \in [1, T]$, the forward pass computes four gating mechanisms simultaneously via stacked weight matrices $\mathbf{W}_x \in \mathbb{R}^{1 \times 4H}$, $\mathbf{W}_h \in \mathbb{R}^{H \times 4H}$, and bias $\mathbf{b} \in \mathbb{R}^{4H}$:
+\begin{align}
+    \text{Forget Gate:} \quad f_t &= \sigma(\mathbf{x}_t \mathbf{W}_f + \mathbf{h}_{t-1} \mathbf{U}_f + b_f), \\
+    \text{Input Gate:} \quad i_t &= \sigma(\mathbf{x}_t \mathbf{W}_i + \mathbf{h}_{t-1} \mathbf{U}_i + b_i), \\
+    \text{Candidate Cell:} \quad \tilde{c}_t &= \tanh(\mathbf{x}_t \mathbf{W}_c + \mathbf{h}_{t-1} \mathbf{U}_c + b_c), \\
+    \text{Cell State Update:} \quad c_t &= f_t \odot c_{t-1} + i_t \odot \tilde{c}_t, \\
+    \text{Output Gate:} \quad o_t &= \sigma(\mathbf{x}_t \mathbf{W}_o + \mathbf{h}_{t-1} \mathbf{U}_o + b_o), \\
+    \text{Hidden State Update:} \quad h_t &= o_t \odot \tanh(c_t), \\
+    \text{Dense Output Prediction:} \quad \hat{y} &= \mathbf{h}_T \mathbf{W}_y + b_y.
+\end{align}
+The forget gate bias was initialized to $b_f = 1.0$ to ensure long-range gradient propagation (Gers et al., 2000). Full analytical \textbf{Backpropagation Through Time (BPTT)} was derived and vectorized across batch dimension $B$:
+\begin{equation}
+    \delta h_T = \frac{2}{B}(\hat{y} - y)\mathbf{W}_y^T, \quad \delta c_t = \delta c_{t+1} + \delta h_t \odot o_t \odot (1 - \tanh^2(c_t)), \quad \delta h_{t-1} = \delta \mathbf{a}_t \mathbf{W}_h^T.
+\end{equation}
+Parameters were optimized using a custom-built \textbf{Adam optimizer} in NumPy ($\beta_1 = 0.9, \beta_2 = 0.999, \eta = 0.008$) equipped with gradient norm clipping ($[-5.0, 5.0]$) to eliminate recurrent gradient explosions.
+
+\newpage
+
+% =========================================================================
+% SECTION III: ML RESULTS AND LOOK AHEAD (~2 PAGES)
+% =========================================================================
+\section{ML Results and Look Ahead}
+
+\subsection{Empirical Findings and Quantitative Evaluation}
+Both models were evaluated on the 290 out-of-sample test trading days (2022--2024) across four primary metrics: Root Mean Squared Error (RMSE), Mean Absolute Error (MAE), Mean Absolute Percentage Error (MAPE), and Directional Movement Accuracy ($\text{sign}(\hat{y}_{t} - P_{t-1}) == \text{sign}(P_t - P_{t-1})$). Table~\ref{tab:comparison} presents the comparative evaluation matrix.
+
+\begin{table}[H]
+\centering
+\caption{Out-of-sample quantitative performance metrics across 290 test trading sessions (2022--2024).}
+\label{tab:comparison}
+\begin{tabular}{lcccc}
+\toprule
+\textbf{Method / Architecture} & \textbf{Test RMSE (\$)} & \textbf{Test MAE (\$)} & \textbf{Test MAPE (\%)} & \textbf{Directional Acc. (\%)} \\
+\midrule
+\textbf{Method 1: Ridge AR(60) (NumPy)} & \textbf{\$4.02} & \textbf{\$3.05} & \textbf{0.76\%} & \textbf{50.87\%} \\
+\textbf{Method 2: Custom LSTM (Scratch)} & \textbf{\$6.38} & \textbf{\$5.28} & \textbf{1.29\%} & \textbf{47.75\%} \\
+\midrule
+\textit{Naïve Persistence Benchmark ($P_{t+1} \approx P_t$)} & \$4.12 & \$3.12 & 0.78\% & 50.00\% \\
+\textit{Performance Delta (M2 vs. M1)} & +\$2.36 & +\$2.23 & +0.53\% & -3.12\% \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Detailed Analysis of Method 1 (Ridge AR) \& Interpretation of Coefficients}
+Method 1 demonstrated exceptional tracking accuracy, registering a Test RMSE of \$4.02, an MAE of \$3.05, and an average percentage error of only 0.76\%. However, examining the model's learned regression coefficients reveals the underlying statistical mechanics of financial price forecasting.
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.88\textwidth]{fig1_m1_coefficients.png}
+\caption{Method 1: Learned Ridge AR(60) autoregressive coefficients across 60 historical lags. Lag 1 (yesterday) overwhelmingly dominates with $\beta_{60} = 0.9489$, while older lags decay toward zero.}
+\label{fig:m1_coefficients}
+\end{figure}
+
+As visualized in Figure~\ref{fig:m1_coefficients}, the coefficient weight is overwhelmingly concentrated on \textbf{Lag 1 (yesterday's close: $\beta_{60} = 0.9489$)}. This indicates that approximately \textbf{95\%} of tomorrow's predicted price is determined purely by today's price. Lag 2 receives a marginal weight of $\beta_{59} = 0.0836$, while the remaining 58 historical lags sum to a negligible $-0.0345$, exhibiting minor mean-reverting drag. The unpenalized intercept bias settled at $\beta_0 = 0.7666$.
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.88\textwidth]{fig2_m1_predictions.png}
+\caption{Method 1: Out-of-sample predicted trajectory versus actual SPY closing price across the 2022--2024 test horizon.}
+\label{fig:m1_predictions}
+\end{figure}
+
+\paragraph{Interpretation:} The linear model learned an optimal approximation of a \textbf{martingale random-walk tracker}. By allocating almost all weight to the most recent observation, the model minimizes point-wise MSE by outputting a slightly shifted replica of $P_t$. As shown in Figure~\ref{fig:m1_predictions}, while the dollar error is minuscule (\$3.05 average deviation), its directional accuracy is \textbf{50.87\%}---statistically indistinguishable from an unbiased coin toss. Thus, linear combinations of historical prices cannot exploit profitable market anomalies in liquid equities.
+
+\subsection{Detailed Analysis of Method 2 (Custom Scratch LSTM)}
+Method 2, trained entirely from scratch in pure NumPy, converged smoothly within 20 epochs ($\sim$2.8 seconds on standard CPU hardware), achieving a Test RMSE of \$6.38, an MAE of \$5.28, and a MAPE of 1.29\%.
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.88\textwidth]{fig3_m2_lstm_predictions.png}
+\caption{Method 2: Custom Scratch LSTM out-of-sample predictions and daily error spread across the test period.}
+\label{fig:m2_lstm}
+\end{figure}
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.88\textwidth]{fig4_comparison.png}
+\caption{Cross-Method Comparative Overlay: Actual SPY Close versus Method 1 (Ridge AR) and Method 2 (Scratch LSTM).}
+\label{fig:comparison}
+\end{figure}
+
+\paragraph{Interpretation:} Unlike the static linear weights of Method 1, the LSTM routes sequential information through its internal cell state $c_t$ and hidden state $h_t$. The gating mechanism acts as a \textbf{dynamic non-linear filter}: the forget gate $f_t$ suppresses short-term idiosyncratic noise, while the candidate cell $\tilde{c}_t$ tracks multi-week momentum trajectories. As shown in Figure~\ref{fig:m2_lstm} and Figure~\ref{fig:comparison}, the LSTM produces a noticeably smoother price path than the Ridge AR model, resisting overreaction to daily volatility bursts. However, this smoothness introduces a slight phase lag during sharp macroeconomic regime shifts (such as aggressive Federal Reserve rate announcements in 2022), resulting in a marginally higher dollar error (\$5.28 vs. \$3.05) and a directional accuracy of \textbf{47.75\%}.
+
+\subsection{Synthesis: Look Ahead, Unresolved Challenges, and Summary of Findings}
+\paragraph{What Is Left to Explore:}
+While this research demonstrated that machine learning algorithms can achieve sub-1.3\% MAPE in tracking SPY valuation levels, several frontier challenges must be addressed to transition from price tracking to true economic profitability:
+\begin{enumerate}[leftmargin=*,itemsep=3pt,topsep=3pt]
+    \item \textbf{Incorporation of Multi-Modal Exogenous Features}: Both models operated under a univariate price restriction. Financial markets do not evolve in an autoregressive vacuum; integrating macro variables (Treasury yield curve inversions, VIX implied volatility, currency indices DXY) and alternative data (earnings transcript sentiment via NLP) represents the most viable path to elevating directional accuracy beyond 50\%.
+    \item \textbf{Stationary Target Reformulation}: Directly forecasting raw price levels $P_{t+1}$ inherently biases optimizers toward the ``Lag-1 persistence trap'' ($P_{t+1} \approx P_t$). Future research should reformulate targets into stationary representations, such as fractional differentiation (López de Prado), log return classification, or volatility regime forecasting.
+    \item \textbf{Execution Frictions and Risk-Adjusted Backtesting}: High quantitative accuracy does not guarantee algorithmic profitability. Realistic trading backtests incorporating bid-ask spreads, broker commissions, slippage, and borrow fees must be simulated to evaluate risk-adjusted metrics (Sharpe ratio, Sortino ratio, and maximum drawdown).
+\end{enumerate}
+
+\paragraph{Summary of Findings:}
+Machine learning is undeniably applicable to financial market analysis, but its utility must be interpreted with domain-specific nuance. Machine learning models excel as non-linear continuous valuation estimators and adaptive filters, but their predictive capacity on raw price series remains heavily constrained by the Efficient Market Hypothesis. Building the LSTM network from scratch in pure NumPy proved that recurrent architectures do not possess an inherent mechanism to bypass market efficiency; rather, real quantitative edge stems from feature engineering, exogenous macroeconomic context, and disciplined risk-adjusted formulation.
+
+% =========================================================================
+% REFERENCES
+% =========================================================================
+\vspace{0.4cm}
+\begin{thebibliography}{9}
+\bibitem{fama1970}
+Fama, E. F. (1970). Efficient capital markets: A review of theory and empirical work. \textit{The Journal of Finance}, 25(2), 383--417.
+
+\bibitem{hochreiter1997}
+Hochreiter, S., \& Schmidhuber, J. (1997). Long short-term memory. \textit{Neural Computation}, 9(8), 1735--1780.
+
+\bibitem{gers2000}
+Gers, F. A., Schmidhuber, J., \& Cummins, F. (2000). Learning to forget: Continual prediction with LSTM. \textit{Neural Computation}, 12(10), 2451--2471.
+
+\bibitem{kingma2014}
+Kingma, D. P., \& Ba, J. (2014). Adam: A method for stochastic optimization. \textit{arXiv preprint arXiv:1412.6980}.
+
+\bibitem{prado2018}
+López de Prado, M. (2018). \textit{Advances in Financial Machine Learning}. John Wiley \& Sons.
+\end{thebibliography}
+
+\end{document}
